@@ -223,6 +223,10 @@ class QuantizedProjection(QuantizedSwitchLinear):
     def input_dims(self):
         return self.weight.shape[-1] * 32 // self.bits
 
+    @property
+    def output_dims(self):  # ai-test fix: outputs are the rows of the weight, 2-D or 3-D
+        return self.weight.shape[-2]
+
     def _can_use_affine_blocks(self, x, sorted_indices, dtype=None):
         dtype = dtype or x.dtype
         return (
