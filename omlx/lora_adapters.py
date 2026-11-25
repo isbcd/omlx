@@ -425,6 +425,96 @@ def fingerprint(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+# ai-test merge patch (scripts/msu-omlx-lora-merge-patch.py): fold the LoRA updates of the adapters listed in
+# ~/.omlx/ai-test-lora-merge.json into the projections' own weights instead of wrapping them.
+import logging as _ai_test_logging
+import os as _ai_test_os
+
+_ai_test_log = _ai_test_logging.getLogger("omlx.lora_adapters")
+
+
+def _ai_test_merge_listed(path):
+    """Whether the adapter folder is listed in the merge config; without the file nothing is merged."""
+    config = _ai_test_os.path.expanduser(
+        _ai_test_os.environ.get("AI_TEST_LORA_MERGE_CONFIG", "~/.omlx/ai-test-lora-merge.json"))
+    if not _ai_test_os.path.exists(config):
+        return False
+    try:
+        with open(config) as f:
+            listed = json.load(f)["merge"]
+        if not isinstance(listed, list):
+            raise TypeError("'merge' is not a list")
+    except Exception as e:
+        raise AdapterError("LoRA merge config %s cannot be read: %s" % (config, e)) from e
+    wanted = {_ai_test_os.path.realpath(_ai_test_os.path.expanduser(str(p))) for p in listed}
+    return _ai_test_os.path.realpath(str(path)) in wanted
+
+
+def _ai_test_kind(base):
+    """The projection's storage format as a merge plan, or (None, reason) when it is wrapped instead."""
+    w = getattr(base, "weight", None)
+    if not isinstance(w, mx.array) or w.ndim != 2:
+        return None, "weight is not a 2-D array"
+    if "scales" not in base:
+        if w.dtype in (mx.float16, mx.bfloat16, mx.float32):
+            return "plain", None
+        return None, "unquantized weight of type %s" % w.dtype
+    mode, bits = getattr(base, "mode", "affine"), getattr(base, "bits", None)
+    if mode == "mxfp8" and bits == 8 and "biases" not in base:
+        return "mxfp8", None
+    if mode == "affine" and bits in (2, 4, 8) and "biases" in base:
+        return "affine", None
+    return None, "no encoder for mode %s with %s bits" % (mode, bits)
+
+
+def _ai_test_encode(w, base, kind):
+    """Codes of float32 w on base's own scales (and biases), packed like base.weight; also the clipped count."""
+    rows, cols = w.shape
+    g = base.group_size
+    if kind == "mxfp8":
+        every = mx.from_fp8(mx.arange(256, dtype=mx.uint8), dtype=mx.float32)
+        top = float(mx.max(mx.where(mx.isnan(every), 0.0, mx.abs(every))).item())
+        s = mx.power(mx.array(2.0, dtype=mx.float32), base.scales.astype(mx.float32) - 127.0)[..., None]
+        v = w.reshape(rows, cols // g, g) / s
+        clipped = mx.sum(mx.abs(v) > top)
+        codes = mx.to_fp8(mx.clip(v, -top, top)).reshape(rows, cols)
+        return mx.contiguous(codes).view(mx.uint32), clipped
+    bits = base.bits
+    top, per = 2 ** bits - 1, 32 // bits
+    s = base.scales.astype(mx.float32)[..., None]
+    z = base.biases.astype(mx.float32)[..., None]
+    flat = s == 0
+    q = mx.where(flat, 0.0, mx.round((w.reshape(rows, cols // g, g) - z) / mx.where(flat, 1.0, s)))
+    clipped = mx.sum((q < 0) | (q > top)) + mx.sum(flat & (w.reshape(rows, cols // g, g) != z))
+    q = mx.clip(q, 0, top).astype(mx.uint32).reshape(rows, cols // per, per)
+    shifts = mx.arange(per, dtype=mx.uint32) * bits
+    return mx.sum(q << shifts, axis=-1).astype(mx.uint32), clipped
+
+
+def _ai_test_values(base):
+    """base's weight values in float32. Affine scales and biases are widened first: dequantizing in their own 16-bit
+    type rounds an 8-bit code's value by up to more than half a step, and encoding it again would change the code."""
+    mode = getattr(base, "mode", "affine")
+    scales = base.scales if mode != "affine" else base.scales.astype(mx.float32)
+    biases = base["biases"].astype(mx.float32) if "biases" in base else None
+    return mx.dequantize(base.weight, scales, biases, group_size=base.group_size, bits=base.bits,
+                         mode=mode).astype(mx.float32)
+
+
+def _ai_test_merge(base, a, b, kind):
+    """Add b.T @ a to base's weight in its own storage format; returns the number of clipped values."""
+    delta = b.astype(mx.float32).T @ a.astype(mx.float32)
+    if kind == "plain":
+        base.weight = (base.weight.astype(mx.float32) + delta).astype(base.weight.dtype)
+        mx.eval(base.weight)
+        return 0
+    w = _ai_test_values(base) + delta
+    packed, clipped = _ai_test_encode(w, base, kind)
+    base.weight = packed
+    mx.eval(base.weight, clipped)
+    return int(clipped.item())
+
+
 def apply_adapter(model: nn.Module, path: str | Path) -> int:
     """Wrap the projections the adapter targets; return how many were wrapped.
 
@@ -475,7 +565,17 @@ def apply_adapter(model: nn.Module, path: str | Path) -> int:
         )
 
     signature = fingerprint(path)
+    _ai_test_on = _ai_test_merge_listed(path)  # ai-test merge patch
+    _ai_test_merged, _ai_test_clipped, _ai_test_why = 0, 0, {}  # ai-test merge patch
     for layer, name, base, a, b in plan:
+        if _ai_test_on:  # ai-test merge patch
+            _ai_test_k, _ai_test_reason = _ai_test_kind(base)
+            if _ai_test_k is not None:
+                _ai_test_clipped += _ai_test_merge(base, a, b, _ai_test_k)
+                object.__setattr__(base, "_omlx_lora_signature", signature + "-merged")
+                _ai_test_merged += 1
+                continue
+            _ai_test_why[_ai_test_reason] = _ai_test_why.get(_ai_test_reason, 0) + 1
         wrapped = LoRALinear(base, a, b)
         # Plain attribute: read by the SSD cache numerics revision.
         object.__setattr__(wrapped, "_omlx_lora_signature", signature)
@@ -483,4 +583,8 @@ def apply_adapter(model: nn.Module, path: str | Path) -> int:
     # oQh fused MLPs call matmul_rotated on their projections, which a wrapper lacks.
     oqh_runtime.release_wrapped(model)
     mx.eval([(entry[3], entry[4]) for entry in plan])
+    if _ai_test_on:  # ai-test merge patch
+        _ai_test_log.info("LoRA adapter %s: merged %d of %d projections into their own weights (%d values "
+                          "clipped); wrapped %d %s", path, _ai_test_merged, len(plan), _ai_test_clipped,
+                          len(plan) - _ai_test_merged, _ai_test_why)
     return len(plan)
