@@ -166,6 +166,30 @@ async def test_lora_adapter_is_checked_when_it_changes(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_lora_merge_is_saved_and_reloads_only_with_an_adapter():
+    pool, _ = _failed_pool()
+    settings = ModelSettings(lora_adapter="/a")
+    await _update_settings(
+        pool, settings, admin_routes.ModelSettingsRequest(lora_merge=True)
+    )
+    assert settings.lora_merge is True
+
+    # Merged and wrapped adapters load different weights; without an adapter
+    # the switch changes nothing.
+    merged = ModelSettings(lora_adapter="/a", lora_merge=True)
+    assert pool._engine_runtime_signature("m", merged) != (
+        pool._engine_runtime_signature("m", ModelSettings(lora_adapter="/a"))
+    )
+    assert pool._engine_runtime_signature("m", ModelSettings(lora_merge=True)) == (
+        pool._engine_runtime_signature("m", ModelSettings())
+    )
+
+    diffusion = {"lora_adapter": "/a", "lora_merge": True}
+    admin_routes._sanitize_diffusion_settings_dict(diffusion)
+    assert (diffusion["lora_adapter"], diffusion["lora_merge"]) == (None, False)
+
+
+@pytest.mark.asyncio
 async def test_load_time_setting_change_clears_cached_failure():
     pool, entry = _failed_pool()
     settings = ModelSettings(trust_remote_code=False)

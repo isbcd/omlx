@@ -1513,6 +1513,8 @@
   "modal.model_settings.no_kwargs": "Nejsou nastaveny žádné kwargs",
   "modal.model_settings.lora_adapter": "LoRA adaptér",
   "modal.model_settings.lora_adapter_hint": "Použije LoRA adaptér ze složek modelů nad těmito váhami. Projeví se po opětovném načtení modelu.",
+  "modal.model_settings.lora_merge": "Sloučit do vah",
+  "modal.model_settings.lora_merge_hint": "Při načtení začlení adaptér do vlastních vah modelu: dekódování běží rychlostí základního modelu, ale formát vah aktualizaci zaokrouhlí, takže velmi malé změny se mohou ztratit. Vypnuto ponechá adaptér jako samostatnou přesnou vrstvu, kterou některé modely dekódují pomaleji. Projeví se po opětovném načtení modelu.",
   "modal.model_settings.lora_adapter_none": "Žádný",
   "modal.model_settings.lora_adapter_info": "Trénováno na {base} · {targets}",
   "modal.model_settings.lora_adapter_empty": "Nebyly nalezeny žádné LoRA adaptéry. Vložte složku adaptéru (s adapter_config.json) do složky modelů.",

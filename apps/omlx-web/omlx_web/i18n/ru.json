@@ -1513,6 +1513,8 @@
   "modal.model_settings.no_kwargs": "Параметры шаблона чата не настроены",
   "modal.model_settings.lora_adapter": "LoRA-адаптер",
   "modal.model_settings.lora_adapter_hint": "Применить LoRA-адаптер из папок моделей поверх этих весов. Применяется после перезагрузки модели.",
+  "modal.model_settings.lora_merge": "Объединить с весами",
+  "modal.model_settings.lora_merge_hint": "При загрузке встроить адаптер в собственные веса модели: декодирование идёт со скоростью базовой модели, но формат весов округляет обновление, поэтому очень малые изменения могут потеряться. Если выключено, адаптер остаётся отдельным точным слоем, который некоторые модели декодируют медленнее. Применяется после перезагрузки модели.",
   "modal.model_settings.lora_adapter_none": "Нет",
   "modal.model_settings.lora_adapter_info": "Обучен на {base} · {targets}",
   "modal.model_settings.lora_adapter_empty": "LoRA-адаптеры не найдены. Поместите папку адаптера (с adapter_config.json) в папку моделей.",

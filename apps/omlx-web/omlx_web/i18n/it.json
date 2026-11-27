@@ -1513,6 +1513,8 @@
   "modal.model_settings.no_kwargs": "Nessun kwarg configurato",
   "modal.model_settings.lora_adapter": "Adattatore LoRA",
   "modal.model_settings.lora_adapter_hint": "Applica un adattatore LoRA dalle cartelle dei modelli sopra questi pesi. Si applica dopo il ricaricamento del modello.",
+  "modal.model_settings.lora_merge": "Unisci nei pesi",
+  "modal.model_settings.lora_merge_hint": "Integra l'adattatore nei pesi del modello al caricamento: la decodifica mantiene la velocità del modello base, ma il formato dei pesi arrotonda l'aggiornamento, quindi le modifiche molto piccole possono andare perse. Disattivato, l'adattatore resta uno strato separato ed esatto, che alcuni modelli decodificano più lentamente. Si applica dopo il ricaricamento del modello.",
   "modal.model_settings.lora_adapter_none": "Nessuno",
   "modal.model_settings.lora_adapter_info": "Addestrato su {base} · {targets}",
   "modal.model_settings.lora_adapter_empty": "Nessun adattatore LoRA trovato. Metti una cartella dell'adattatore (con adapter_config.json) in una cartella dei modelli.",

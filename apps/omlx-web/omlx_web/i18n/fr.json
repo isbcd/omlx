@@ -1513,6 +1513,8 @@
   "modal.model_settings.no_kwargs": "Aucun kwargs configuré",
   "modal.model_settings.lora_adapter": "Adaptateur LoRA",
   "modal.model_settings.lora_adapter_hint": "Applique un adaptateur LoRA des dossiers de modèles sur ces poids. Prend effet après rechargement du modèle.",
+  "modal.model_settings.lora_merge": "Fusionner dans les poids",
+  "modal.model_settings.lora_merge_hint": "Intègre l'adaptateur aux poids du modèle au chargement : le décodage garde la vitesse du modèle de base, mais le format des poids arrondit la mise à jour, si bien que les très petites modifications peuvent se perdre. Désactivé, l'adaptateur reste une couche séparée et exacte, que certains modèles décodent plus lentement. Prend effet après rechargement du modèle.",
   "modal.model_settings.lora_adapter_none": "Aucun",
   "modal.model_settings.lora_adapter_info": "Entraîné sur {base} · {targets}",
   "modal.model_settings.lora_adapter_empty": "Aucun adaptateur LoRA trouvé. Placez un dossier d'adaptateur (avec adapter_config.json) dans un dossier de modèles.",

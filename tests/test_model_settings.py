@@ -987,6 +987,17 @@ def test_lora_adapter_conflicts_raise_and_profile_merges_drop_them(tmp_path):
     assert (loaded.lora_adapter, loaded.dflash_enabled) == ("/a", False)
 
 
+def test_lora_merge_is_off_by_default_and_survives_a_round_trip():
+    from omlx.model_profiles import MODEL_SPECIFIC_PROFILE_FIELDS
+
+    assert ModelSettings().lora_merge is False
+    settings = ModelSettings.from_dict({"lora_adapter": "/a", "lora_merge": True})
+    assert settings.lora_merge is True
+    assert ModelSettings.from_dict(settings.to_dict()).lora_merge is True
+    # Profiles carry it with the adapter, so a variant can choose either way.
+    assert "lora_merge" in MODEL_SPECIFIC_PROFILE_FIELDS
+
+
 def test_a_saved_profile_with_both_accelerators_still_loads(tmp_path):
     """The load path has to survive a settings file written by an older build
     or hand-edited: the model keeps its settings, minus the losing toggle."""

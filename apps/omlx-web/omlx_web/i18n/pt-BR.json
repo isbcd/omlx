@@ -1513,6 +1513,8 @@
   "modal.model_settings.no_kwargs": "Nenhum kwarg configurado",
   "modal.model_settings.lora_adapter": "Adaptador LoRA",
   "modal.model_settings.lora_adapter_hint": "Aplica um adaptador LoRA das pastas de modelos sobre estes pesos. Aplicado após recarregar o modelo.",
+  "modal.model_settings.lora_merge": "Mesclar nos pesos",
+  "modal.model_settings.lora_merge_hint": "Incorpora o adaptador aos pesos do próprio modelo ao carregar: a decodificação mantém a velocidade do modelo base, mas o formato dos pesos arredonda a atualização, então mudanças muito pequenas podem se perder. Desativado, o adaptador fica como uma camada separada e exata, que alguns modelos decodificam mais devagar. Aplicado após recarregar o modelo.",
   "modal.model_settings.lora_adapter_none": "Nenhum",
   "modal.model_settings.lora_adapter_info": "Treinado sobre {base} · {targets}",
   "modal.model_settings.lora_adapter_empty": "Nenhum adaptador LoRA encontrado. Coloque uma pasta de adaptador (com adapter_config.json) em uma pasta de modelos.",

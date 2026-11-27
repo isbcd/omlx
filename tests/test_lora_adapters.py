@@ -1,6 +1,7 @@
-"""LoRA adapters: PEFT and mlx formats, refusals and compatibility."""
+"""LoRA adapters: PEFT and mlx formats, refusals, compatibility and merging."""
 
 import json
+import logging
 
 import pytest
 
@@ -11,6 +12,9 @@ from omlx.cache.paged_ssd_cache import numerics_revision_for_model  # noqa: E402
 from omlx.lora_adapters import (  # noqa: E402
     AdapterError,
     LoRALinear,
+    _encode,
+    _merge_kind,
+    _weight_values,
     adapter_info,
     apply_adapter,
     compatibility_problem,
@@ -190,3 +194,100 @@ def test_unsupported_adapters_report_why(tmp_path, config, extra, problem):
     assert problem in info.problem
     with pytest.raises(AdapterError):
         apply_adapter(_Model(), tmp_path / "a")
+
+
+def _quantized(weight, mode, bits, group):
+    """A projection holding mx.quantize's codes for weight [out, in]."""
+    out_dims, in_dims = weight.shape
+    layer = nn.QuantizedLinear(
+        in_dims, out_dims, bias=False, group_size=group, bits=bits, mode=mode
+    )
+    parts = mx.quantize(weight, group_size=group, bits=bits, mode=mode)
+    layer.weight, layer.scales = parts[0], parts[1]
+    if len(parts) == 3:
+        layer.biases = parts[2]
+    return layer
+
+
+@pytest.mark.parametrize(
+    "mode, bits, group",
+    [
+        ("affine", 2, 32),
+        ("affine", 4, 64),
+        ("affine", 8, 64),
+        ("affine", 8, 128),
+        ("mxfp8", 8, 32),
+    ],
+)
+def test_merge_encoder_gives_back_the_stored_codes(mode, bits, group):
+    # A merge re-encodes every value, so values the update leaves alone must
+    # come back as the codes they were stored with.
+    mx.random.seed(0)
+    weight = (mx.random.normal((32, 256)) * 0.05).astype(mx.bfloat16)
+    layer = _quantized(weight, mode, bits, group)
+    kind, reason = _merge_kind(layer)
+    assert reason is None
+    codes, clipped = _encode(_weight_values(layer), layer, kind)
+    assert mx.array_equal(codes, layer.weight).item()
+    assert clipped.item() == 0
+
+
+def _update(a, b, scale, dtype):
+    """B @ A as apply_adapter forms it: both factors cast to the activation dtype."""
+    a = a.astype(dtype).astype(mx.float32)
+    b = (b.T * scale).astype(dtype).astype(mx.float32)
+    return b.T @ a
+
+
+@pytest.mark.parametrize("fmt", ["peft", "mlx"])
+def test_merge_folds_the_update_into_the_weights(tmp_path, fmt):
+    factors = _factors()
+    path = _write(tmp_path / "a", fmt, factors, alpha_pattern={"down_proj": 4})
+    scales = {"peft": (2.0, 1.0), "mlx": (0.5, 0.5)}[fmt]
+    model = _Model()
+    q = model.layers[1].self_attn.q_proj
+    down = model.layers[0].mlp.down_proj
+    (qa, qb), (da, db) = factors.values()
+    want_q = q.weight.astype(mx.float32) + _update(qa, qb, scales[0], mx.bfloat16)
+    want_q = want_q.astype(mx.bfloat16)
+    # The nearest value on down_proj's own grid: its scales and biases stay.
+    step = down.scales.astype(mx.float32)[..., None]
+    zero = down.biases.astype(mx.float32)[..., None]
+    target = _weight_values(down) + _update(da, db, scales[1], mx.bfloat16)
+    target = target.reshape(DIMS, -1, down.group_size)
+    codes = mx.clip(mx.round((target - zero) / step), 0, 2**down.bits - 1)
+    want_down = (codes * step + zero).reshape(DIMS, HIDDEN)
+    stored = (down.weight, down.scales, down.biases)
+
+    assert apply_adapter(model, path, merge=True) == 2
+    merged_q = model.layers[1].self_attn.q_proj
+    merged_down = model.layers[0].mlp.down_proj
+    # Same module types: decode paths that only accept them stay on.
+    assert type(merged_q) is nn.Linear and type(merged_down) is nn.QuantizedLinear
+    assert mx.array_equal(merged_q.weight, want_q).item()
+    assert not mx.array_equal(merged_down.weight, stored[0]).item()
+    assert mx.array_equal(merged_down.scales, stored[1]).item()
+    assert mx.array_equal(merged_down.biases, stored[2]).item()
+    # MLX's dequantize rounds code * scale + bias a hair differently; a wrong
+    # code would be off by a whole step. (Affine scales can be negative.)
+    off = mx.abs(_weight_values(merged_down) - want_down).reshape(target.shape)
+    assert (off <= mx.abs(step) / 1000).all().item()
+
+    # The SSD cache must keep KV from merged and wrapped weights apart.
+    wrapped = _Model()
+    apply_adapter(wrapped, path)
+    assert numerics_revision_for_model(model).endswith("-merged")
+    assert numerics_revision_for_model(model) != numerics_revision_for_model(wrapped)
+
+
+def test_merge_wraps_formats_it_cannot_encode(tmp_path, caplog):
+    model = _Model()
+    model.layers[0].mlp.down_proj = nn.QuantizedLinear(HIDDEN, DIMS, bias=False, bits=3)
+    path = _write(tmp_path / "a", "peft", _factors())
+
+    with caplog.at_level(logging.INFO, logger="omlx.lora_adapters"):
+        assert apply_adapter(model, path, merge=True) == 2
+    assert type(model.layers[1].self_attn.q_proj) is nn.Linear
+    assert isinstance(model.layers[0].mlp.down_proj, LoRALinear)
+    assert "merged 1 of 2" in caplog.text
+    assert "no encoder for mode affine with 3 bits" in caplog.text

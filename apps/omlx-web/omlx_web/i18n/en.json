@@ -1513,6 +1513,8 @@
   "modal.model_settings.no_kwargs": "No kwargs configured",
   "modal.model_settings.lora_adapter": "LoRA Adapter",
   "modal.model_settings.lora_adapter_hint": "Apply a LoRA adapter from the model folders on top of these weights. Applies after the model reloads.",
+  "modal.model_settings.lora_merge": "Merge into weights",
+  "modal.model_settings.lora_merge_hint": "Fold the adapter into the model's own weights at load: decoding runs at the base model's speed, but the weight format rounds the update, so very small changes can be lost. Off keeps it as a separate, exact layer, which some models decode more slowly. Applies after the model reloads.",
   "modal.model_settings.lora_adapter_none": "None",
   "modal.model_settings.lora_adapter_info": "Trained on {base} · {targets}",
   "modal.model_settings.lora_adapter_empty": "No LoRA adapters found. Put an adapter folder (with adapter_config.json) in a model folder.",

@@ -1513,6 +1513,8 @@
   "modal.model_settings.no_kwargs": "暂无配置的参数",
   "modal.model_settings.lora_adapter": "LoRA 适配器",
   "modal.model_settings.lora_adapter_hint": "在这些权重之上应用模型文件夹中的 LoRA 适配器。重新加载模型后生效。",
+  "modal.model_settings.lora_merge": "合并进权重",
+  "modal.model_settings.lora_merge_hint": "加载时把适配器合并进模型自己的权重：解码速度与原模型相同，但权重格式会对更新取整，细小的改动可能丢失。关闭时适配器作为单独一层，结果精确，但某些模型解码会变慢。重新加载模型后生效。",
   "modal.model_settings.lora_adapter_none": "无",
   "modal.model_settings.lora_adapter_info": "基于 {base} 训练 · {targets}",
   "modal.model_settings.lora_adapter_empty": "未找到 LoRA 适配器。请将适配器文件夹（含 adapter_config.json）放入模型文件夹。",

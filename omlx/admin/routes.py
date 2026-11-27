@@ -517,6 +517,7 @@ class ModelSettingsRequest(BaseModel):
     vlm_mtp_draft_model: str | None = None
     vlm_mtp_draft_block_size: int | None = None
     lora_adapter: str | None = None
+    lora_merge: bool | None = None
     reasoning_parser: str | None = None
     guided_grammar_enabled: bool | None = None
     guided_grammar: str | None = None
@@ -1160,6 +1161,7 @@ def _sanitize_diffusion_settings_dict(settings: dict) -> None:
         settings[key] = None
 
     settings["force_sampling"] = False
+    settings["lora_merge"] = False
     settings["thinking_budget_enabled"] = False
     settings["guided_grammar_enabled"] = False
     settings["turboquant_kv_enabled"] = False
@@ -3624,6 +3626,10 @@ async def update_model_settings(
             # Whole-payload saves resend it; only a change is checked (#4217).
             touched.discard("lora_adapter")
         current_settings.lora_adapter = new_adapter
+    if "lora_merge" in sent:
+        current_settings.lora_merge = (
+            False if is_diffusion_model else bool(request.lora_merge)
+        )
 
     # Draft usability is only enforced for a feature that is on: the admin UI
     # re-sends the whole payload, so a draft directory deleted from disk (or a

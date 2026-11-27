@@ -1513,6 +1513,8 @@
   "modal.model_settings.no_kwargs": "設定された引数はありません",
   "modal.model_settings.lora_adapter": "LoRA アダプター",
   "modal.model_settings.lora_adapter_hint": "モデルフォルダーにある LoRA アダプターをこの重みの上に適用します。モデルの再読み込み後に適用されます。",
+  "modal.model_settings.lora_merge": "重みにマージ",
+  "modal.model_settings.lora_merge_hint": "読み込み時にアダプターをモデル自身の重みに統合します。デコード速度は元のモデルと同じですが、重みの形式に合わせて更新が丸められるため、ごく小さな変化は失われることがあります。オフにするとアダプターは独立した正確な層として適用されますが、モデルによってはデコードが遅くなります。モデルの再読み込み後に適用されます。",
   "modal.model_settings.lora_adapter_none": "なし",
   "modal.model_settings.lora_adapter_info": "{base} で学習 · {targets}",
   "modal.model_settings.lora_adapter_empty": "LoRA アダプターが見つかりません。アダプターフォルダー（adapter_config.json を含む）をモデルフォルダーに置いてください。",

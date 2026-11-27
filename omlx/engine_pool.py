@@ -1509,6 +1509,9 @@ class EnginePool:
             add("vlm_mtp_draft_block_size", data.get("vlm_mtp_draft_block_size"))
 
         add("lora_adapter", data.get("lora_adapter") or None)
+        if has_value("lora_adapter"):
+            # A merged and a wrapped adapter leave different weights behind.
+            add("lora_merge", bool(data.get("lora_merge", False)))
 
         return tuple(signature)
 

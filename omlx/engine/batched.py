@@ -448,8 +448,9 @@ class BatchedEngine(BaseEngine):
         # before the fusions and packers that replace the projections.
         lora_path = getattr(self._model_settings, "lora_adapter", None)
         if lora_path:
+            merge = bool(getattr(self._model_settings, "lora_merge", False))
             wrapped = await loop.run_in_executor(
-                get_mlx_executor(), apply_adapter, self._model, lora_path
+                get_mlx_executor(), apply_adapter, self._model, lora_path, merge
             )
             logger.info("LoRA adapter %s: %d projections", lora_path, wrapped)
 

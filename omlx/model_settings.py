@@ -616,6 +616,10 @@ class ModelSettings:
     # LoRA adapter folder applied on top of the weights at load (PEFT or mlx).
     # The adapter is never served on its own; profiles can expose a variant.
     lora_adapter: Optional[str] = None
+    # Fold the adapter into the projections' own weights at load instead of
+    # wrapping them (lora_adapters.apply_adapter, merge=True): decoding keeps the
+    # base model's speed, and the update is rounded to the weight format.
+    lora_merge: bool = False
 
     # Model management flags
     is_pinned: bool = False

@@ -1,8 +1,16 @@
 """LoRA adapters applied on top of a loaded model.
 
-The adapter stays separate from the base weights: each targeted projection is
-wrapped so it returns base(x) + (x @ A) @ B. Merging the update into quantized
-weights would round most of it away, so the base module is never changed.
+By default the adapter stays separate from the base weights: each targeted
+projection is wrapped so it returns base(x) + (x @ A) @ B, exactly.
+
+With merge (the model setting lora_merge), B.T @ A is instead added to each
+target's own weights, in its own storage format and on its own scales, and the
+module keeps its type. Decode paths that only accept the original projection
+type then stay on, so decoding runs at the base model's speed; the price is that
+the update is rounded to the weight format. That suits an edit that is large
+next to one quantization step (an abliteration or refusal-direction LoRA); a
+fine-tune's small updates can mostly round away, so those are better left
+wrapped. Formats without an encoder here stay wrapped, and the log says why.
 
 Two on-disk formats are read:
 - Hugging Face PEFT: adapter_config.json (peft_type LORA) + adapter_model.safetensors
@@ -17,6 +25,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import logging
 import math
 import re
 import struct
@@ -29,6 +38,8 @@ import mlx.nn as nn
 from mlx.utils import tree_flatten, tree_unflatten
 
 from .oqh import runtime as oqh_runtime
+
+logger = logging.getLogger(__name__)
 
 CONFIG_FILE = "adapter_config.json"
 PEFT_WEIGHTS = "adapter_model.safetensors"
@@ -410,6 +421,78 @@ def _target(layer: nn.Module, name: str) -> nn.Module:
     return module
 
 
+def _merge_kind(base: nn.Module) -> tuple[str | None, str | None]:
+    """How base stores its weight for a merge ("plain", "mxfp8" or "affine"), or
+    (None, why the target stays wrapped)."""
+    weight = getattr(base, "weight", None)
+    if not isinstance(weight, mx.array) or weight.ndim != 2:
+        return None, "weight is not a 2-D array"
+    if "scales" not in base:
+        if weight.dtype in (mx.float16, mx.bfloat16, mx.float32):
+            return "plain", None
+        return None, f"unquantized weight of type {weight.dtype}"
+    mode, bits = getattr(base, "mode", "affine"), getattr(base, "bits", None)
+    if mode == "mxfp8" and bits == 8 and "biases" not in base:
+        return "mxfp8", None
+    if mode == "affine" and bits in (2, 4, 8) and "biases" in base:
+        return "affine", None
+    return None, f"no encoder for mode {mode} with {bits} bits"
+
+
+def _weight_values(base: nn.Module) -> mx.array:
+    """base's weight values in float32. Affine scales and biases are widened
+    first: dequantizing in their own 16-bit type can move an 8-bit code's value
+    by more than half a step, and encoding it again would change the code."""
+    mode = getattr(base, "mode", "affine")
+    scales = base.scales if mode != "affine" else base.scales.astype(mx.float32)
+    biases = base["biases"].astype(mx.float32) if "biases" in base else None
+    return mx.dequantize(
+        base.weight, scales, biases, group_size=base.group_size, bits=base.bits, mode=mode
+    ).astype(mx.float32)
+
+
+def _encode(w: mx.array, base: nn.Module, kind: str) -> tuple[mx.array, mx.array]:
+    """Codes of float32 w on base's own scales (and biases), packed like
+    base.weight, and the number of values clipped to the format's range."""
+    rows, cols = w.shape
+    group = base.group_size
+    if kind == "mxfp8":
+        every = mx.from_fp8(mx.arange(256, dtype=mx.uint8), dtype=mx.float32)
+        top = float(mx.max(mx.where(mx.isnan(every), 0.0, mx.abs(every))).item())
+        scale = mx.power(
+            mx.array(2.0, dtype=mx.float32), base.scales.astype(mx.float32) - 127.0
+        )[..., None]
+        v = w.reshape(rows, cols // group, group) / scale
+        clipped = mx.sum(mx.abs(v) > top)
+        codes = mx.to_fp8(mx.clip(v, -top, top)).reshape(rows, cols)
+        return mx.contiguous(codes).view(mx.uint32), clipped
+    bits = base.bits
+    top, per = 2**bits - 1, 32 // bits
+    scale = base.scales.astype(mx.float32)[..., None]
+    bias = base.biases.astype(mx.float32)[..., None]
+    grouped = w.reshape(rows, cols // group, group)
+    flat = scale == 0
+    q = mx.where(flat, 0.0, mx.round((grouped - bias) / mx.where(flat, 1.0, scale)))
+    clipped = mx.sum((q < 0) | (q > top)) + mx.sum(flat & (grouped != bias))
+    q = mx.clip(q, 0, top).astype(mx.uint32).reshape(rows, cols // per, per)
+    shifts = mx.arange(per, dtype=mx.uint32) * bits
+    return mx.sum(q << shifts, axis=-1).astype(mx.uint32), clipped
+
+
+def _merge_into(base: nn.Module, a: mx.array, b: mx.array, kind: str) -> int:
+    """Add b.T @ a to base's weight in its own storage format; return the
+    number of values clipped to the format's range."""
+    delta = b.astype(mx.float32).T @ a.astype(mx.float32)
+    if kind == "plain":
+        base.weight = (base.weight.astype(mx.float32) + delta).astype(base.weight.dtype)
+        mx.eval(base.weight)
+        return 0
+    packed, clipped = _encode(_weight_values(base) + delta, base, kind)
+    base.weight = packed
+    mx.eval(base.weight, clipped)
+    return int(clipped.item())
+
+
 def fingerprint(path: str | Path) -> str:
     """Hash of the adapter config, the weights header, size and modification time.
 
@@ -425,11 +508,13 @@ def fingerprint(path: str | Path) -> str:
     return digest.hexdigest()
 
 
-def apply_adapter(model: nn.Module, path: str | Path) -> int:
-    """Wrap the projections the adapter targets; return how many were wrapped.
+def apply_adapter(model: nn.Module, path: str | Path, merge: bool = False) -> int:
+    """Apply the adapter to the projections it targets; return how many.
 
-    Every target is checked before any module is replaced, so a refused
-    adapter leaves the model unchanged.
+    Each target is wrapped, or with merge folded into its own weights when its
+    format has an encoder (see the module docstring). Every target is checked
+    before any module is changed, so a refused adapter leaves the model
+    unchanged.
     """
     path = Path(path).expanduser()
     if not path.is_dir():
@@ -475,7 +560,19 @@ def apply_adapter(model: nn.Module, path: str | Path) -> int:
         )
 
     signature = fingerprint(path)
+    merged = clipped = 0
+    kept: dict[str, int] = {}
     for layer, name, base, a, b in plan:
+        if merge:
+            kind, reason = _merge_kind(base)
+            if kind is not None:
+                clipped += _merge_into(base, a, b, kind)
+                # Plain attribute: read by the SSD cache numerics revision, which
+                # must not mix KV computed with merged and with wrapped weights.
+                object.__setattr__(base, "_omlx_lora_signature", signature + "-merged")
+                merged += 1
+                continue
+            kept[reason] = kept.get(reason, 0) + 1
         wrapped = LoRALinear(base, a, b)
         # Plain attribute: read by the SSD cache numerics revision.
         object.__setattr__(wrapped, "_omlx_lora_signature", signature)
@@ -483,4 +580,15 @@ def apply_adapter(model: nn.Module, path: str | Path) -> int:
     # oQh fused MLPs call matmul_rotated on their projections, which a wrapper lacks.
     oqh_runtime.release_wrapped(model)
     mx.eval([(entry[3], entry[4]) for entry in plan])
+    if merge:
+        logger.info(
+            "LoRA adapter %s: merged %d of %d projections into their own weights "
+            "(%d values clipped); wrapped %d%s",
+            path,
+            merged,
+            len(plan),
+            clipped,
+            len(plan) - merged,
+            f" {kept}" if kept else "",
+        )
     return len(plan)

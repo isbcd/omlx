@@ -71,6 +71,7 @@
         'vlm_mtp_draft_model',
         'vlm_mtp_draft_block_size',
         'lora_adapter',
+        'lora_merge',
     ]);
     const DIFFUSION_UNSUPPORTED_CT_KWARGS = new Set([
         'enable_thinking',
@@ -1802,6 +1803,10 @@
                         if (g) out.guided_grammar = g;
                         continue;
                     }
+                    if (k === 'lora_merge') {
+                        out.lora_merge = !!(ms.lora_adapter && ms.lora_merge);
+                        continue;
+                    }
                     // Standard field: omit unset values entirely — the server
                     // treats absent universal keys as "reset to default" when
                     // the profile is applied (snapshot semantics).
@@ -2358,6 +2363,7 @@
                     vlm_mtp_draft_model: s.vlm_mtp_draft_model || '',
                     vlm_mtp_draft_block_size: s.vlm_mtp_draft_block_size ?? null,
                     lora_adapter: isDiffusion ? '' : (s.lora_adapter || ''),
+                    lora_merge: isDiffusion ? false : !!s.lora_merge,
                     ctKwargEntries,
                     is_diffusion_model: isDiffusion,
                     external_engine: s.external_engine || '',
@@ -3737,6 +3743,7 @@
                         ? parseInt(ms.vlm_mtp_draft_block_size)
                         : null,
                     lora_adapter: ms.lora_adapter || null,
+                    lora_merge: !!(ms.lora_adapter && ms.lora_merge),
                     trust_remote_code: ms.trust_remote_code,
                     external_engine: ms.external_engine || null,
                 };
@@ -3802,6 +3809,7 @@
                         vlm_mtp_draft_model: null,
                         vlm_mtp_draft_block_size: null,
                         lora_adapter: null,
+                        lora_merge: false,
                     });
                 }
                 if (this.selectedModel?.embedding_audio_supported) {
