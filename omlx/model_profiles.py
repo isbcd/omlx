@@ -90,6 +90,8 @@ MODEL_SPECIFIC_PROFILE_FIELDS = (
     "index_cache_freq",
     "lora_adapter",
     "lora_merge",
+    "loopcd_enabled",
+    "loopcd_skip_thinking",
 )
 
 # Excluded — never stored in a profile or template.
